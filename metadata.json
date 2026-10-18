@@ -1,0 +1,6 @@
+{
+  "name": "Zip2Git",
+  "description": "Upload ZIP archives directly to GitHub repositories as atomic commits using GitHub OAuth Device Flow and Git Data API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

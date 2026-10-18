@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Deep GitHub dark background -->
+    <path
+        android:fillColor="#0D1117"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <!-- Subtle circuit / grid lines -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1F242C"
+        android:strokeWidth="1"
+        android:pathData="M0,36 L108,36 M0,72 L108,72 M36,0 L36,108 M72,0 L72,108" />
+
+    <!-- Soft radial glow at center -->
+    <path
+        android:fillColor="#161B22"
+        android:pathData="M24,24 h60 v60 h-60 z" />
+</vector>

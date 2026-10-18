@@ -1,0 +1,55 @@
+<resources>
+    <string name="app_name">Zip2Git</string>
+    <string name="tagline">Push ZIP files directly to GitHub repositories</string>
+    
+    <!-- Login Screen -->
+    <string name="login_title">Connect to GitHub</string>
+    <string name="login_subtitle">Authorize Zip2Git using GitHub OAuth Device Flow or Personal Access Token.</string>
+    <string name="device_flow_tab">Device Flow</string>
+    <string name="token_tab">Personal Token</string>
+    <string name="client_id_label">GitHub OAuth Client ID</string>
+    <string name="client_id_hint">Paste your OAuth App Client ID</string>
+    <string name="start_device_login">Start Device Authorization</string>
+    <string name="device_code_prompt">Enter this code on GitHub to authorize:</string>
+    <string name="copy_code">Copy Code</string>
+    <string name="open_github">Open GitHub Authorization</string>
+    <string name="waiting_for_authorization">Waiting for GitHub authorization…</string>
+    <string name="token_label">GitHub Personal Access Token</string>
+    <string name="token_hint">ghp_... or github_pat_...</string>
+    <string name="token_note">Requires \'repo\' and \'workflow\' scopes.</string>
+    <string name="login_with_token">Sign in with Token</string>
+    <string name="logout">Sign Out</string>
+    <string name="oauth_setup_guide_title">How to create an OAuth App</string>
+    <string name="oauth_setup_guide">1. Open github.com/settings/developers\n2. Tap \"New OAuth App\"\n3. Set Name: Zip2Git, Homepage &amp; Callback: https://github.com\n4. Enable \"Enable Device Flow\"\n5. Copy your Client ID and paste it above.</string>
+    
+    <!-- Home / ZIP Screen -->
+    <string name="select_zip_btn">Select ZIP File</string>
+    <string name="remove_single_folder">Remove top-level folder</string>
+    <string name="skip_large_warning">Files over 100 MB cannot be uploaded to GitHub and are automatically excluded.</string>
+    <string name="files_selected_format">%1$d files selected (%2$s)</string>
+    
+    <!-- Repo Screen -->
+    <string name="create_new_repo">New Repository</string>
+    <string name="use_existing_repo">Existing Repository</string>
+    <string name="repo_name_label">Repository Name</string>
+    <string name="repo_desc_label">Description (optional)</string>
+    <string name="private_repo">Private Repository</string>
+    <string name="search_repos_hint">Search your repositories…</string>
+    <string name="branch_label">Target Branch</string>
+    <string name="commit_message_label">Commit Message</string>
+    <string name="default_commit_message">Upload from Zip2Git</string>
+    <string name="push_to_github_btn">Push to GitHub</string>
+    
+    <!-- Push Screen -->
+    <string name="pushing_title">Pushing to GitHub</string>
+    <string name="pushing_step_blobs">Uploading files as Git blobs…</string>
+    <string name="pushing_step_tree">Creating Git tree…</string>
+    <string name="pushing_step_commit">Creating commit…</string>
+    <string name="pushing_step_ref">Updating branch reference…</string>
+    <string name="push_success_title">Successfully Pushed!</string>
+    <string name="open_repo_browser">Open Repository</string>
+    <string name="open_actions_tab">View GitHub Actions</string>
+    <string name="cancel_upload">Cancel</string>
+    <string name="retry_btn">Try Again</string>
+    <string name="push_another_btn">Upload Another ZIP</string>
+</resources>

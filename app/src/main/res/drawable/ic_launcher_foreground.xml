@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ZIP Folder / Archive Container Base (Left Side) -->
+    <path
+        android:fillColor="#21262D"
+        android:strokeColor="#30363D"
+        android:strokeWidth="1.5"
+        android:pathData="M27,38 L43,38 L47,42 L59,42 C61.2,42 63,43.8 63,46 L63,74 C63,76.2 61.2,78 59,78 L27,78 C24.8,78 23,76.2 23,74 L23,42 C23,39.8 24.8,38 27,38 Z" />
+
+    <!-- Zipper Teeth pattern -->
+    <path
+        android:fillColor="#58A6FF"
+        android:pathData="M39,44 h4 v3 h-4 z M43,48 h4 v3 h-4 z M39,52 h4 v3 h-4 z M43,56 h4 v3 h-4 z M39,60 h4 v3 h-4 z" />
+
+    <!-- Zipper Pull / Slider -->
+    <path
+        android:fillColor="#F0F6FC"
+        android:pathData="M40,65 h6 v6 c0,1.5 -1.2,2.5 -3,2.5 c-1.8,0 -3,-1 -3,-2.5 z" />
+
+    <!-- Git Branch Curve connecting from Zip to Git -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#2EA043"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M50,60 C60,60 62,40 76,40 M76,40 L76,68" />
+
+    <!-- Git Commit Node 1 (Root/Branch) -->
+    <path
+        android:fillColor="#2EA043"
+        android:strokeColor="#F0F6FC"
+        android:strokeWidth="1.5"
+        android:pathData="M51,60 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+
+    <!-- Git Commit Node 2 (Top Branch) -->
+    <path
+        android:fillColor="#58A6FF"
+        android:strokeColor="#F0F6FC"
+        android:strokeWidth="1.5"
+        android:pathData="M76,40 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+
+    <!-- Git Commit Node 3 (Main Branch Bottom) -->
+    <path
+        android:fillColor="#3FB950"
+        android:strokeColor="#F0F6FC"
+        android:strokeWidth="1.5"
+        android:pathData="M76,68 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+
+    <!-- Upload Arrow Accent above Git Branch -->
+    <path
+        android:fillColor="#F0F6FC"
+        android:pathData="M76,27 L70,33 L73.5,33 L73.5,37 L78.5,37 L78.5,33 L82,33 Z" />
+</vector>
