@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import java.io.File
 
 sealed interface AuthUiState {
     data object Loading : AuthUiState
@@ -51,7 +52,8 @@ enum class CurrentScreen {
     LOGIN,
     HOME_ZIP,
     REPO_SELECTION,
-    PUSH_PROGRESS
+    PUSH_PROGRESS,
+    EDITOR
 }
 
 data class ZipUiState(
@@ -81,6 +83,22 @@ data class RepoUiState(
     val errorMessage: String? = null
 )
 
+data class EditorEntry(
+    val name: String,
+    val relativePath: String,
+    val isDirectory: Boolean,
+    val sizeBytes: Long
+)
+
+data class EditorUiState(
+    val currentDir: String = "",
+    val entries: List<EditorEntry> = emptyList(),
+    val openFilePath: String? = null,
+    val fileContent: String = "",
+    val isDirty: Boolean = false,
+    val message: String? = null
+)
+
 class Zip2GitViewModel(application: Application) : AndroidViewModel(application) {
 
     private val storage = SecureStorage(application)
@@ -107,6 +125,9 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
 
     private val _pushResult = MutableStateFlow<PushResult?>(null)
     val pushResult: StateFlow<PushResult?> = _pushResult.asStateFlow()
+
+    private val _editorState = MutableStateFlow(EditorUiState())
+    val editorState: StateFlow<EditorUiState> = _editorState.asStateFlow()
 
     private var pollingJob: Job? = null
     private var pushJob: Job? = null
@@ -416,6 +437,301 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
 
     fun setCommitMessage(msg: String) {
         _repoUiState.update { it.copy(commitMessage = msg) }
+    }
+
+
+    // ------------------------------------------------------------------
+    // Code editor
+    // ------------------------------------------------------------------
+
+    private val maxEditableBytes = 300 * 1024
+
+    private fun workspaceRoot(): File? = _zipUiState.value.extractResult?.extractDir
+
+    private fun resolveInWorkspace(relativePath: String): File? {
+        val root = workspaceRoot() ?: return null
+        val target = if (relativePath.isEmpty()) root else File(root, relativePath)
+        return try {
+            val rootPath = root.canonicalPath
+            val targetPath = target.canonicalPath
+            if (targetPath == rootPath || targetPath.startsWith(rootPath + File.separator)) target else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun relativeToWorkspace(file: File): String {
+        val root = workspaceRoot() ?: return file.name
+        return file.relativeTo(root).path.replace('\\', '/')
+    }
+
+    private fun cleanRelativeName(raw: String): String? {
+        val parts = raw.trim().replace('\\', '/').split('/').filter { it.isNotBlank() && it != "." }
+        if (parts.isEmpty()) return null
+        if (parts.any { it == ".." || it == ".git" }) return null
+        return parts.joinToString("/")
+    }
+
+    private fun joinPath(dir: String, name: String): String =
+        if (dir.isEmpty()) name else "$dir/$name"
+
+    private fun setEditorMessage(msg: String?) {
+        _editorState.update { it.copy(message = msg) }
+    }
+
+    fun editorClearMessage() {
+        setEditorMessage(null)
+    }
+
+    fun openEditor() {
+        val context = getApplication<Application>()
+        if (_zipUiState.value.extractResult == null) {
+            val dir = File(context.cacheDir, "extracted_zip").apply {
+                if (exists()) deleteRecursively()
+                mkdirs()
+            }
+            _zipUiState.update {
+                it.copy(
+                    zipUri = null,
+                    zipFileName = "New project (Code Editor)",
+                    zipFileSize = 0L,
+                    extractResult = ZipExtractResult(dir, 0, 0L, null, emptyList()),
+                    fileTree = emptyList(),
+                    removeTopLevelFolder = false,
+                    errorMessage = null
+                )
+            }
+        }
+        _editorState.value = EditorUiState()
+        editorOpenDir("")
+        _currentScreen.value = CurrentScreen.EDITOR
+    }
+
+    fun exitEditor() {
+        refreshTreeFromDisk()
+        _currentScreen.value = CurrentScreen.HOME_ZIP
+    }
+
+    fun editorOpenDir(dir: String) {
+        val folder = resolveInWorkspace(dir) ?: return
+        val items = (folder.listFiles() ?: emptyArray<File>())
+            .filter { it.name != ".git" }
+            .sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
+            .map {
+                EditorEntry(
+                    name = it.name,
+                    relativePath = relativeToWorkspace(it),
+                    isDirectory = it.isDirectory,
+                    sizeBytes = if (it.isDirectory) 0L else it.length()
+                )
+            }
+        _editorState.update { it.copy(currentDir = dir, entries = items) }
+    }
+
+    fun editorNavigateUp() {
+        val parent = _editorState.value.currentDir.substringBeforeLast('/', "")
+        editorOpenDir(parent)
+    }
+
+    private fun looksBinary(bytes: ByteArray): Boolean {
+        val limit = minOf(bytes.size, 8000)
+        for (i in 0 until limit) {
+            if (bytes[i] == 0.toByte()) return true
+        }
+        return false
+    }
+
+    fun editorOpenFile(relativePath: String) {
+        val file = resolveInWorkspace(relativePath) ?: return
+        if (!file.isFile) return
+        if (file.length() > maxEditableBytes) {
+            setEditorMessage("File is too large to edit here (max 300 KB).")
+            return
+        }
+        try {
+            val bytes = file.readBytes()
+            if (looksBinary(bytes)) {
+                setEditorMessage("Binary file - cannot be edited as text.")
+                return
+            }
+            _editorState.update {
+                it.copy(
+                    openFilePath = relativePath,
+                    fileContent = String(bytes, Charsets.UTF_8),
+                    isDirty = false,
+                    message = null
+                )
+            }
+        } catch (e: Exception) {
+            setEditorMessage("Could not open file: ${e.message}")
+        }
+    }
+
+    fun editorUpdateContent(text: String) {
+        _editorState.update { it.copy(fileContent = text, isDirty = true) }
+    }
+
+    fun editorSave(): Boolean {
+        val path = _editorState.value.openFilePath ?: return false
+        val file = resolveInWorkspace(path) ?: return false
+        return try {
+            file.writeText(_editorState.value.fileContent)
+            _editorState.update { it.copy(isDirty = false, message = "Saved") }
+            true
+        } catch (e: Exception) {
+            setEditorMessage("Save failed: ${e.message}")
+            false
+        }
+    }
+
+    fun editorCloseFile() {
+        _editorState.update { it.copy(openFilePath = null, fileContent = "", isDirty = false) }
+        editorOpenDir(_editorState.value.currentDir)
+    }
+
+    fun editorCreateFile(rawName: String) {
+        val name = cleanRelativeName(rawName)
+        if (name == null) {
+            setEditorMessage("Invalid file name.")
+            return
+        }
+        val relative = joinPath(_editorState.value.currentDir, name)
+        val file = resolveInWorkspace(relative)
+        if (file == null) {
+            setEditorMessage("Invalid file path.")
+            return
+        }
+        if (file.exists()) {
+            setEditorMessage("Already exists: $name")
+            return
+        }
+        try {
+            file.parentFile?.mkdirs()
+            file.createNewFile()
+        } catch (e: Exception) {
+            setEditorMessage("Could not create file: ${e.message}")
+            return
+        }
+        editorOpenDir(_editorState.value.currentDir)
+        editorOpenFile(relative)
+    }
+
+    fun editorCreateFolder(rawName: String) {
+        val name = cleanRelativeName(rawName)
+        if (name == null) {
+            setEditorMessage("Invalid folder name.")
+            return
+        }
+        val relative = joinPath(_editorState.value.currentDir, name)
+        val folder = resolveInWorkspace(relative)
+        if (folder == null) {
+            setEditorMessage("Invalid folder path.")
+            return
+        }
+        if (folder.exists()) {
+            setEditorMessage("Already exists: $name")
+            return
+        }
+        try {
+            folder.mkdirs()
+            // Git does not track empty folders, so add a placeholder file.
+            File(folder, ".gitkeep").createNewFile()
+            setEditorMessage("Folder created (.gitkeep added so Git keeps it).")
+        } catch (e: Exception) {
+            setEditorMessage("Could not create folder: ${e.message}")
+            return
+        }
+        editorOpenDir(_editorState.value.currentDir)
+    }
+
+    fun editorDelete(relativePath: String) {
+        if (relativePath.isEmpty()) return
+        val target = resolveInWorkspace(relativePath) ?: return
+        try {
+            target.deleteRecursively()
+        } catch (e: Exception) {
+            setEditorMessage("Delete failed: ${e.message}")
+            return
+        }
+        val open = _editorState.value.openFilePath
+        if (open != null && (open == relativePath || open.startsWith("$relativePath/"))) {
+            _editorState.update { it.copy(openFilePath = null, fileContent = "", isDirty = false) }
+        }
+        editorOpenDir(_editorState.value.currentDir)
+    }
+
+    fun editorRename(relativePath: String, rawNewName: String) {
+        val newName = rawNewName.trim()
+        if (newName.isBlank() || newName.contains('/') || newName.contains('\\') ||
+            newName == "." || newName == ".." || newName == ".git"
+        ) {
+            setEditorMessage("Invalid name.")
+            return
+        }
+        val source = resolveInWorkspace(relativePath) ?: return
+        val destination = File(source.parentFile, newName)
+        if (destination.exists()) {
+            setEditorMessage("Already exists: $newName")
+            return
+        }
+        if (!source.renameTo(destination)) {
+            setEditorMessage("Rename failed.")
+            return
+        }
+        editorOpenDir(_editorState.value.currentDir)
+    }
+
+    /**
+     * Rebuilds the file tree from disk after editing, keeping the user's
+     * existing deselections so nothing they unchecked gets pushed by accident.
+     */
+    private fun refreshTreeFromDisk() {
+        val current = _zipUiState.value
+        val result = current.extractResult ?: return
+        val dir = result.extractDir
+
+        val deselected = mutableSetOf<String>()
+        fun collect(items: List<FileEntryItem>) {
+            for (item in items) {
+                if (item.isDirectory) {
+                    collect(item.children)
+                } else if (!item.isSelected && !item.isExcluded) {
+                    deselected.add(item.relativePath)
+                }
+            }
+        }
+        collect(current.fileTree)
+
+        fun applySelection(item: FileEntryItem): FileEntryItem {
+            val kids = item.children.map { applySelection(it) }.toMutableList()
+            val selected = if (item.isDirectory) {
+                item.isSelected && (kids.isEmpty() || kids.any { it.isSelected })
+            } else {
+                item.isSelected && item.relativePath !in deselected
+            }
+            return item.copy(isSelected = selected, children = kids)
+        }
+
+        val newTree = extractor.buildFileTree(dir).map { applySelection(it) }
+
+        val roots = dir.listFiles() ?: emptyArray<File>()
+        val single = if (roots.size == 1 && roots[0].isDirectory) roots[0].name else null
+        val keepStripToggle = single != null && single == result.singleTopLevelFolder
+
+        val files = dir.walkTopDown().filter { it.isFile }.toList()
+
+        _zipUiState.update {
+            it.copy(
+                extractResult = result.copy(
+                    totalExtractedFiles = files.size,
+                    totalBytes = files.sumOf { f -> f.length() },
+                    singleTopLevelFolder = single,
+                    fileTree = newTree
+                ),
+                fileTree = newTree,
+                removeTopLevelFolder = if (keepStripToggle) it.removeTopLevelFolder else false
+            )
+        }
     }
 
     fun cancelPush() {

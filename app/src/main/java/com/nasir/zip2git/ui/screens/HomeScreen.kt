@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
@@ -62,6 +63,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nasir.zip2git.R
 import com.nasir.zip2git.data.model.FileEntryItem
 import com.nasir.zip2git.ui.theme.GitHubBlue
+import com.nasir.zip2git.ui.theme.GitHubBlueDark
 import com.nasir.zip2git.ui.theme.GitHubBorder
 import com.nasir.zip2git.ui.theme.GitHubDarkSurface
 import com.nasir.zip2git.ui.theme.GitHubDarkSurfaceVariant
@@ -172,6 +174,31 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = stringResource(R.string.select_zip_btn),
+                        fontWeight = FontWeight.Bold,
+                        color = GitHubTextPrimary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = { viewModel.openEditor() },
+                    enabled = !zipState.isExtracting,
+                    colors = ButtonDefaults.buttonColors(containerColor = GitHubBlueDark),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("open_editor_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Code,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (zipState.extractResult != null) "Edit Code / Add Files" else "Code Editor (New Project)",
                         fontWeight = FontWeight.Bold,
                         color = GitHubTextPrimary
                     )
@@ -362,7 +389,7 @@ fun HomeScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Select a .zip archive from your device to begin.",
+                    text = "Select a .zip archive, or open the Code Editor to start a new project.",
                     style = MaterialTheme.typography.bodyMedium.copy(color = GitHubTextMuted)
                 )
             }

@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nasir.zip2git.data.model.PushStage
+import com.nasir.zip2git.ui.screens.EditorScreen
 import com.nasir.zip2git.ui.screens.HomeScreen
 import com.nasir.zip2git.ui.screens.LoginScreen
 import com.nasir.zip2git.ui.screens.PushScreen
@@ -38,7 +39,11 @@ class MainActivity : ComponentActivity() {
                 val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
                 val progress by viewModel.pushProgress.collectAsStateWithLifecycle()
 
-                BackHandler(enabled = currentScreen != CurrentScreen.HOME_ZIP && currentScreen != CurrentScreen.LOGIN) {
+                BackHandler(
+                    enabled = currentScreen != CurrentScreen.HOME_ZIP &&
+                        currentScreen != CurrentScreen.LOGIN &&
+                        currentScreen != CurrentScreen.EDITOR
+                ) {
                     when (currentScreen) {
                         CurrentScreen.REPO_SELECTION -> viewModel.navigateTo(CurrentScreen.HOME_ZIP)
                         CurrentScreen.PUSH_PROGRESS -> {
@@ -67,6 +72,7 @@ class MainActivity : ComponentActivity() {
                             CurrentScreen.HOME_ZIP -> HomeScreen(viewModel = viewModel)
                             CurrentScreen.REPO_SELECTION -> RepoScreen(viewModel = viewModel)
                             CurrentScreen.PUSH_PROGRESS -> PushScreen(viewModel = viewModel)
+                            CurrentScreen.EDITOR -> EditorScreen(viewModel = viewModel)
                         }
                     }
                 }
