@@ -1,6 +1,9 @@
 package com.nasir.zip2git.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
@@ -19,6 +22,8 @@ import com.nasir.zip2git.data.zip.ZipExtractor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +38,8 @@ import java.io.File
 sealed interface AuthUiState {
     data object Loading : AuthUiState
     data object LoggedOut : AuthUiState
+    /** Internet is down / unstable. Token is kept safe, app keeps retrying by itself. */
+    data object Offline : AuthUiState
     data class DeviceFlowWaiting(
         val userCode: String,
         val verificationUri: String,
@@ -132,10 +139,6 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
     private var pollingJob: Job? = null
     private var pushJob: Job? = null
 
-    init {
-        checkExistingAuth()
-    }
-
     fun navigateTo(screen: CurrentScreen) {
         _currentScreen.value = screen
     }
@@ -145,30 +148,96 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
         storage.saveClientId(id)
     }
 
-    private fun checkExistingAuth() {
-        viewModelScope.launch {
-            val token = storage.getToken()
-            if (token.isNullOrBlank()) {
-                _authUiState.value = AuthUiState.LoggedOut
-                _currentScreen.value = CurrentScreen.LOGIN
-                return@launch
-            }
+    private var authRetryJob: Job? = null
+    private val retrySignal = Channel<Unit>(Channel.CONFLATED)
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
 
+    init {
+        checkExistingAuth()
+    }
+
+    private fun startNetWatch() {
+        if (netCallback != null) return
+        val cm = getApplication<Application>()
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                retrySignal.trySend(Unit) // internet came back -> retry immediately
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(cb)
+            netCallback = cb
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun stopNetWatch() {
+        val cb = netCallback ?: return
+        val cm = getApplication<Application>()
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        try {
+            cm?.unregisterNetworkCallback(cb)
+        } catch (_: Exception) {
+        }
+        netCallback = null
+    }
+
+    /** Called by the "Retry now" button. */
+    fun retryConnectionNow() {
+        retrySignal.trySend(Unit)
+    }
+
+    /**
+     * Connects with a saved token. The token is deleted ONLY if GitHub answers 401.
+     * Any network problem keeps the token and retries automatically with back-off.
+     */
+    private fun connectWithToken(token: String) {
+        authRetryJob?.cancel()
+        authRetryJob = viewModelScope.launch {
             _authUiState.value = AuthUiState.Loading
-            val profileResult = apiClient.getUserProfile(token)
-            profileResult.fold(
-                onSuccess = { user ->
+            var waitMs = 3000L
+            while (isActive) {
+                val result = apiClient.getUserProfile(token)
+                val user = result.getOrNull()
+                if (user != null) {
+                    stopNetWatch()
                     _authUiState.value = AuthUiState.Authenticated(user)
                     _currentScreen.value = CurrentScreen.HOME_ZIP
                     loadUserRepos(token)
-                },
-                onFailure = {
+                    return@launch
+                }
+
+                if (result.exceptionOrNull() is GitHubApiClient.UnauthorizedException) {
+                    stopNetWatch()
                     storage.clearToken()
                     _authUiState.value = AuthUiState.LoggedOut
                     _currentScreen.value = CurrentScreen.LOGIN
+                    return@launch
                 }
-            )
+
+                // Network problem: keep token, show Offline, wait and retry.
+                _authUiState.value = AuthUiState.Offline
+                startNetWatch()
+                withTimeoutOrNull(waitMs) { retrySignal.receive() }
+                waitMs = (waitMs * 2).coerceAtMost(30_000L)
+            }
         }
+    }
+
+    private fun checkExistingAuth() {
+        val token = storage.getToken()
+        if (token.isNullOrBlank()) {
+            _authUiState.value = AuthUiState.LoggedOut
+            _currentScreen.value = CurrentScreen.LOGIN
+            return
+        }
+        connectWithToken(token)
+    }
+
+    override fun onCleared() {
+        stopNetWatch()
+        super.onCleared()
     }
 
     fun startDeviceFlow() {
@@ -233,7 +302,8 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
                                     loadUserRepos(tokenResp.accessToken)
                                 },
                                 onFailure = {
-                                    _authUiState.value = AuthUiState.Error("Authenticated, but could not load profile.")
+                                    // Token is already saved; keep it and retry instead of failing.
+                                    connectWithToken(tokenResp.accessToken)
                                 }
                             )
                             return@launch
@@ -284,7 +354,13 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
                     loadUserRepos(cleanToken)
                 },
                 onFailure = { err ->
-                    _authUiState.value = AuthUiState.Error("Invalid Token or Network error: ${err.message}")
+                    if (err is GitHubApiClient.UnauthorizedException) {
+                        _authUiState.value = AuthUiState.Error("Invalid token. Please check it and try again.")
+                    } else {
+                        // Network problem: save the token anyway and keep retrying.
+                        storage.saveToken(cleanToken)
+                        connectWithToken(cleanToken)
+                    }
                 }
             )
         }
@@ -292,6 +368,8 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
 
     fun logout() {
         pollingJob?.cancel()
+        authRetryJob?.cancel()
+        stopNetWatch()
         storage.clearToken()
         _authUiState.value = AuthUiState.LoggedOut
         _currentScreen.value = CurrentScreen.LOGIN

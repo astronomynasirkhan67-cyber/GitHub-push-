@@ -242,6 +242,72 @@ fun LoginScreen(
             return
         }
 
+        if (authState is AuthUiState.Offline) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = GitHubDarkSurface),
+                border = BorderStroke(1.dp, GitHubBorder),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 3.dp,
+                        color = GitHubGreenBright
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "No stable internet connection",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = GitHubTextPrimary
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Your token is safe. Reconnecting automatically as soon as internet is back.",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = GitHubTextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.logout() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("offline_logout_button")
+                        ) {
+                            Text(stringResource(R.string.logout))
+                        }
+                        Button(
+                            onClick = { viewModel.retryConnectionNow() },
+                            colors = ButtonDefaults.buttonColors(containerColor = GitHubGreen),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("retry_connection_button")
+                        ) {
+                            Text(
+                                text = "Retry now",
+                                color = GitHubTextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+            return
+        }
+
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = GitHubDarkSurface,

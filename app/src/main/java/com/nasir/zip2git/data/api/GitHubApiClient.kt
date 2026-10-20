@@ -30,6 +30,9 @@ import java.util.concurrent.TimeUnit
 
 class GitHubApiClient {
 
+    /** Thrown ONLY when GitHub says the token itself is invalid (HTTP 401). */
+    class UnauthorizedException(message: String) : IOException(message)
+
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -104,6 +107,11 @@ class GitHubApiClient {
                 val response = client.newCall(request).execute()
                 val responseString = response.body?.string().orEmpty()
 
+                if (response.code == 401) {
+                    return@withContext Result.failure(
+                        UnauthorizedException("Token is invalid or revoked (HTTP 401)")
+                    )
+                }
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         IOException("Failed to fetch profile: HTTP ${response.code} $responseString")
