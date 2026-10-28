@@ -19,6 +19,8 @@ import com.nasir.zip2git.data.model.PushStage
 import com.nasir.zip2git.data.storage.SecureStorage
 import com.nasir.zip2git.data.zip.ZipExtractResult
 import com.nasir.zip2git.data.zip.ZipExtractor
+import com.nasir.zip2git.push.PushManager
+import com.nasir.zip2git.push.PushParams
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -127,20 +129,21 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
     private val _repoUiState = MutableStateFlow(RepoUiState())
     val repoUiState: StateFlow<RepoUiState> = _repoUiState.asStateFlow()
 
-    private val _pushProgress = MutableStateFlow(PushProgress())
-    val pushProgress: StateFlow<PushProgress> = _pushProgress.asStateFlow()
+    val pushProgress: StateFlow<PushProgress> = PushManager.progress
 
-    private val _pushResult = MutableStateFlow<PushResult?>(null)
-    val pushResult: StateFlow<PushResult?> = _pushResult.asStateFlow()
+    val pushResult: StateFlow<PushResult?> = PushManager.result
 
     private val _editorState = MutableStateFlow(EditorUiState())
     val editorState: StateFlow<EditorUiState> = _editorState.asStateFlow()
 
     private var pollingJob: Job? = null
-    private var pushJob: Job? = null
 
     fun navigateTo(screen: CurrentScreen) {
         _currentScreen.value = screen
+        if (screen == CurrentScreen.REPO_SELECTION) {
+            // A repo created in the last push must show up without restarting the app.
+            storage.getToken()?.takeIf { it.isNotBlank() }?.let { loadUserRepos(it) }
+        }
     }
 
     fun updateClientId(id: String) {
@@ -154,6 +157,13 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         checkExistingAuth()
+        viewModelScope.launch {
+            PushManager.result.collect { res ->
+                if (res != null && res.isSuccess) {
+                    storage.getToken()?.takeIf { it.isNotBlank() }?.let { loadUserRepos(it) }
+                }
+            }
+        }
     }
 
     private fun startNetWatch() {
@@ -203,7 +213,11 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
                 if (user != null) {
                     stopNetWatch()
                     _authUiState.value = AuthUiState.Authenticated(user)
-                    _currentScreen.value = CurrentScreen.HOME_ZIP
+                    _currentScreen.value = if (PushManager.running.value) {
+                        CurrentScreen.PUSH_PROGRESS
+                    } else {
+                        CurrentScreen.HOME_ZIP
+                    }
                     loadUserRepos(token)
                     return@launch
                 }
@@ -381,12 +395,16 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
             val result = apiClient.getUserRepos(token)
             result.fold(
                 onSuccess = { list ->
-                    _repoUiState.update {
-                        it.copy(
+                    _repoUiState.update { state ->
+                        val previous = state.selectedExistingRepo
+                        val kept = previous?.let { prev -> list.firstOrNull { it.id == prev.id } }
+                        val selected = kept ?: list.firstOrNull()
+                        state.copy(
                             existingRepos = list,
                             isLoadingRepos = false,
-                            selectedExistingRepo = list.firstOrNull(),
-                            targetBranch = list.firstOrNull()?.defaultBranch ?: "main"
+                            selectedExistingRepo = selected,
+                            targetBranch = if (kept != null) state.targetBranch
+                            else selected?.defaultBranch ?: "main"
                         )
                     }
                 },
@@ -398,6 +416,12 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onZipSelected(uri: Uri) {
+        if (PushManager.running.value) {
+            _zipUiState.update {
+                it.copy(errorMessage = "A push is still running. Wait for it to finish before choosing another ZIP.")
+            }
+            return
+        }
         val context = getApplication<Application>()
         val (fileName, fileSize) = extractor.getZipMetadata(context, uri)
 
@@ -414,11 +438,13 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             val result = extractor.extractZip(context, uri) { count, name ->
-                _zipUiState.update {
-                    it.copy(
-                        extractionCount = count,
-                        extractionCurrentFile = name
-                    )
+                if (count % 20 == 0 || count < 20) {
+                    _zipUiState.update {
+                        it.copy(
+                            extractionCount = count,
+                            extractionCurrentFile = name
+                        )
+                    }
                 }
             }
 
@@ -813,27 +839,24 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun cancelPush() {
-        pushJob?.cancel()
-        _pushProgress.value = PushProgress(
-            stage = PushStage.FAILED,
-            message = "Push operation cancelled by user."
-        )
-        _pushResult.value = PushResult(
-            isSuccess = false,
-            errorMessage = "Operation cancelled."
-        )
+        PushManager.cancel()
     }
 
     fun startPush() {
+        if (PushManager.running.value) {
+            _currentScreen.value = CurrentScreen.PUSH_PROGRESS
+            return
+        }
+
         val token = storage.getToken()
         if (token.isNullOrBlank()) {
-            _pushResult.value = PushResult(isSuccess = false, errorMessage = "User is not logged in.")
+            PushManager.reportError("User is not logged in.")
             return
         }
 
         val extractResult = _zipUiState.value.extractResult
         if (extractResult == null) {
-            _pushResult.value = PushResult(isSuccess = false, errorMessage = "No ZIP files extracted.")
+            PushManager.reportError("No ZIP files extracted.")
             return
         }
 
@@ -848,208 +871,29 @@ class Zip2GitViewModel(application: Application) : AndroidViewModel(application)
         )
 
         if (selectedFiles.isEmpty()) {
-            _pushResult.value = PushResult(
-                isSuccess = false,
-                errorMessage = "No files selected to push. Please select at least one file."
-            )
+            PushManager.reportError("No files selected to push. Please select at least one file.")
             return
         }
 
+        val repoState = _repoUiState.value
+        val userLogin = (_authUiState.value as? AuthUiState.Authenticated)?.user?.login.orEmpty()
+
         _currentScreen.value = CurrentScreen.PUSH_PROGRESS
-        _pushResult.value = null
 
-        pushJob = viewModelScope.launch {
-            try {
-                val isCreate = _repoUiState.value.isCreateNew
-                val userState = _authUiState.value as? AuthUiState.Authenticated
-                val owner = userState?.user?.login ?: ""
-                var repoName = ""
-                var branch = _repoUiState.value.targetBranch.trim().ifBlank { "main" }
-
-                if (isCreate) {
-                    repoName = _repoUiState.value.newRepoName.trim()
-                    if (repoName.isBlank()) {
-                        throw IllegalArgumentException("Repository name cannot be empty.")
-                    }
-
-                    _pushProgress.value = PushProgress(
-                        stage = PushStage.FETCHING_BRANCH,
-                        message = "Creating new repository '$repoName'…"
-                    )
-
-                    val createRes = apiClient.createRepository(
-                        token = token,
-                        name = repoName,
-                        description = _repoUiState.value.newRepoDescription,
-                        isPrivate = _repoUiState.value.isPrivate
-                    )
-
-                    createRes.getOrThrow()
-                    delay(2000L)
-                } else {
-                    val existing = _repoUiState.value.selectedExistingRepo
-                        ?: throw IllegalArgumentException("Please select an existing repository.")
-                    repoName = existing.name
-                    branch = _repoUiState.value.targetBranch.trim().ifBlank { existing.defaultBranch }
-                }
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.FETCHING_BRANCH,
-                    message = "Fetching branch '$branch' reference…"
-                )
-
-                val commitSha = apiClient.getBranchCommitSha(token, owner, repoName, branch).getOrThrow()
-                val baseTreeSha = apiClient.getCommitTreeSha(token, owner, repoName, commitSha).getOrThrow()
-
-                val totalFiles = selectedFiles.size
-                var completedFiles = 0
-                val semaphore = Semaphore(4)
-                val treeItems = mutableListOf<GitTreeItem>()
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.UPLOADING_BLOBS,
-                    completedFiles = 0,
-                    totalFiles = totalFiles,
-                    message = "Uploading 0/$totalFiles files…"
-                )
-
-                val blobUploadTasks = selectedFiles.map { (gitPath, physicalFile) ->
-                    async {
-                        if (!isActive) throw CancellationException()
-
-                        val bytes = physicalFile.readBytes()
-                        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-
-                        val blobResult = apiClient.createBlobWithRetry(
-                            token = token,
-                            owner = owner,
-                            repo = repoName,
-                            base64Content = base64,
-                            semaphore = semaphore
-                        )
-
-                        val blobSha = blobResult.getOrElse { error ->
-                            if (gitPath.contains(".github/workflows")) {
-                                throw Exception("WORKFLOW_SCOPE_ERROR: ${error.message}")
-                            }
-                            throw error
-                        }
-
-                        synchronized(treeItems) {
-                            treeItems.add(
-                                GitTreeItem(
-                                    path = gitPath,
-                                    mode = "100644",
-                                    type = "blob",
-                                    sha = blobSha
-                                )
-                            )
-                            completedFiles++
-                            _pushProgress.value = PushProgress(
-                                stage = PushStage.UPLOADING_BLOBS,
-                                currentFileName = gitPath,
-                                completedFiles = completedFiles,
-                                totalFiles = totalFiles,
-                                message = "Uploaded $completedFiles of $totalFiles files"
-                            )
-                        }
-                    }
-                }
-
-                blobUploadTasks.awaitAll()
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.CREATING_TREE,
-                    completedFiles = totalFiles,
-                    totalFiles = totalFiles,
-                    message = "Creating Git tree with ${treeItems.size} entries…"
-                )
-
-                val newTreeSha = apiClient.createTree(
-                    token = token,
-                    owner = owner,
-                    repo = repoName,
-                    baseTreeSha = baseTreeSha,
-                    items = treeItems
-                ).getOrThrow()
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.CREATING_COMMIT,
-                    completedFiles = totalFiles,
-                    totalFiles = totalFiles,
-                    message = "Creating commit…"
-                )
-
-                val commitMessage = _repoUiState.value.commitMessage.ifBlank { "Upload from Zip2Git" }
-                val newCommitSha = apiClient.createCommit(
-                    token = token,
-                    owner = owner,
-                    repo = repoName,
-                    message = commitMessage,
-                    treeSha = newTreeSha,
-                    parentCommitSha = commitSha
-                ).getOrThrow()
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.UPDATING_REF,
-                    completedFiles = totalFiles,
-                    totalFiles = totalFiles,
-                    message = "Updating branch '$branch' reference…"
-                )
-
-                apiClient.updateRef(
-                    token = token,
-                    owner = owner,
-                    repo = repoName,
-                    branch = branch,
-                    newCommitSha = newCommitSha
-                ).getOrThrow()
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.COMPLETED,
-                    completedFiles = totalFiles,
-                    totalFiles = totalFiles,
-                    message = "Done! All files pushed to $owner/$repoName"
-                )
-
-                val repoUrl = "https://github.com/$owner/$repoName"
-                val actionsUrl = "https://github.com/$owner/$repoName/actions"
-
-                _pushResult.value = PushResult(
-                    isSuccess = true,
-                    commitSha = newCommitSha,
-                    repoFullName = "$owner/$repoName",
-                    branch = branch,
-                    repoUrl = repoUrl,
-                    actionsUrl = actionsUrl,
-                    filesUploaded = totalFiles
-                )
-
-            } catch (ce: CancellationException) {
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.FAILED,
-                    message = "Upload cancelled."
-                )
-                _pushResult.value = PushResult(
-                    isSuccess = false,
-                    errorMessage = "Operation cancelled."
-                )
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: "An unknown error occurred during push."
-                val isWorkflowError = errorMsg.contains("WORKFLOW_SCOPE_ERROR") ||
-                        errorMsg.contains("workflow", ignoreCase = true)
-
-                _pushProgress.value = PushProgress(
-                    stage = PushStage.FAILED,
-                    message = errorMsg
-                )
-
-                _pushResult.value = PushResult(
-                    isSuccess = false,
-                    errorMessage = errorMsg,
-                    isWorkflowScopeError = isWorkflowError
-                )
-            }
-        }
+        PushManager.start(
+            getApplication<Application>(),
+            PushParams(
+                token = token,
+                userLogin = userLogin,
+                isCreateNew = repoState.isCreateNew,
+                newRepoName = repoState.newRepoName,
+                newRepoDescription = repoState.newRepoDescription,
+                newRepoPrivate = repoState.isPrivate,
+                existingRepo = repoState.selectedExistingRepo,
+                targetBranch = repoState.targetBranch,
+                commitMessage = repoState.commitMessage,
+                files = selectedFiles
+            )
+        )
     }
 }

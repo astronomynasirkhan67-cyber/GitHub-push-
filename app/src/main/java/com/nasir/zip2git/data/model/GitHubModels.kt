@@ -130,3 +130,10 @@ data class PushResult(
     val errorMessage: String? = null,
     val isWorkflowScopeError: Boolean = false
 )
+
+/** One file entry for a batched tree request: either inline [content] (text) or a blob [sha]. */
+data class TreeEntry(
+    val path: String,
+    val content: String? = null,
+    val sha: String? = null
+)

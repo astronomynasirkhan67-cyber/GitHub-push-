@@ -1,6 +1,11 @@
 package com.nasir.zip2git
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -33,6 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        askNotificationPermission()
 
         setContent {
             Zip2GitTheme {
@@ -50,7 +56,8 @@ class MainActivity : ComponentActivity() {
                             if (progress.stage == PushStage.COMPLETED || progress.stage == PushStage.FAILED) {
                                 viewModel.navigateTo(CurrentScreen.REPO_SELECTION)
                             } else {
-                                viewModel.cancelPush()
+                                // Push keeps running in the background service.
+                                moveTaskToBack(true)
                             }
                         }
                         else -> {}
@@ -77,6 +84,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

@@ -61,7 +61,7 @@ class ZipExtractor {
 
             ZipInputStream(inputStream).use { zis ->
                 var entry: ZipEntry? = zis.nextEntry
-                val buffer = ByteArray(8192)
+                val buffer = ByteArray(64 * 1024)
 
                 while (entry != null) {
                     val rawName = entry.name.replace('\\', '/')
